@@ -1,4 +1,4 @@
-streamlit==1.38.0
+streamlit
 SpeechRecognition==3.10.4
 gTTS==2.5.1
 requests==2.32.3
