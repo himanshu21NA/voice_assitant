@@ -16,12 +16,31 @@ PAGE_KEYWORDS = {
 
 EXCLUDE_TERMS = ["home", "privacy", "contact", "terms", "cookie", "menu", "navigation", "footer"]
 
+# ---------------- CONFIG ----------------
 URLS = {
-    "sales_specials": "https://www.stevenscreekchevy.com/newspecials.html",
-    "service_specials": "https://www.stevenscreekchevy.com/service-parts-specials.html",
-    "ev_incentives": "https://www.stevenscreekchevy.com/ev-incentives",
-    "financing_deals": "https://www.stevenscreekchevy.com/finance.aspx",
+    "sales_specials": [
+        "https://www.stevenscreekchevy.com/newspecials.html"
+    ],
+    "service_specials": [
+        "https://www.stevenscreekchevy.com/service-parts-specials.html",
+        "https://www.stevenscreekchevy.com/service",
+        "https://www.stevenscreekchevy.com/serviceapptform",
+        "https://www.stevenscreekchevy.com/service-department-san-jose-ca",
+        "https://www.stevenscreekchevy.com/onstar.html",
+        "https://www.stevenscreekchevy.com/brake-service-san-jose-ca",
+        "https://www.stevenscreekchevy.com/tire-rotation-san-jose-ca",
+        "https://www.stevenscreekchevy.com/new-tires",
+        "https://www.stevenscreekchevy.com/mobile-service-plus",
+    ],
+    "ev_incentives": [
+        "https://www.stevenscreekchevy.com/ev-incentives",
+        "https://www.stevenscreekchevy.com/electric-vehicles",
+    ],
+    "financing_deals": [
+        "https://www.stevenscreekchevy.com/finance.aspx"
+    ],
 }
+
 
 # Vehicle API
 BASE_URL = "https://www.stevenscreekchevy.com/api/vhcliaa/vehicle-pages/cosmos/srp/vehicles/16823/3165452"
@@ -89,6 +108,9 @@ def scrape_inventory():
                 "ext_color": v.get("ExteriorColorLabel"),
                 "int_color": v.get("InteriorColorLabel"),
                 "mileage": v.get("Mileage"),
+                "condition": v.get("VehicleCondition"),
+                "fuel":v.get("VehicleFuelType"),
+                "description": v.get("VehicleCommentsEncoded"),
                 "url": v.get("VehicleDetailUrl"),
                 "img": v.get("VehicleImageModel", {}).get("VehiclePhotoSrc"),
             }
@@ -106,11 +128,18 @@ async def run_scraper():
     dataset = {}
 
     # Scrape specials
-    for category, url in URLS.items():
+    for category, urls in URLS.items():
         keywords = PAGE_KEYWORDS.get(category, [])
-        print(f"Scraping {category} from {url}")
-        dataset[category] = await scrape_filtered_divs(url, keywords)
-        print(f"  → Found {len(dataset[category])} entries")
+        all_entries = []
+
+        for url in urls:
+            print(f"Scraping {category} from {url}")
+            entries = await scrape_filtered_divs(url, keywords)
+            print(f"  → Found {len(entries)} entries")
+            all_entries.extend(entries)
+
+        dataset[category] = all_entries
+        print(f"  → Total {len(dataset[category])} entries in {category}")
 
     # Add vehicle inventory via API
     print("Fetching vehicle inventory via API...")
@@ -123,6 +152,7 @@ async def run_scraper():
 
     print("\n✅ Data saved to stevenscreek_dataset.json")
     return dataset
+
 
 def main():
     asyncio.run(run_scraper())
