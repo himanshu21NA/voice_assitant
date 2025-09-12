@@ -194,3 +194,8 @@ async def run_scraper():
     total_time = end_time - start_time
     print(f"✅ Scraper completed in {total_time:.2f} seconds.")
     return dataset
+
+if __name__ == "__main__":
+    logging.info("Running scraper as standalone job...")
+    asyncio.run(run_scraper())
+    logging.info("Scraper finished.")
