@@ -4,6 +4,8 @@ from typing import List, Dict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from openai import OpenAI
+import psycopg2
+import os
 
 import faiss
 import numpy as np
@@ -99,10 +101,36 @@ def save_corpus(corpus, path="cleaned_corpus.json"):
     with open(path, "w") as f:
         json.dump(corpus, f, indent=2)
 
-# --- Load corpus ---
-def load_corpus(path="cleaned_corpus.json"):
-    with open(path, "r") as f:
-        return json.load(f)
+# # --- Load corpus ---
+# def load_corpus(path="cleaned_corpus.json"):
+#     with open(path, "r") as f:
+#         return json.load(f)
+
+def load_latest_dataset():
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL not set")
+
+    conn = psycopg2.connect(db_url)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT content, created_at
+        FROM scraped_data
+        WHERE category = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, ("stevenscreek",))
+
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
+        raise RuntimeError("No dataset found in DB")
+
+    content, timestamp = row
+    logging.info(f"Loaded dataset updated at {timestamp}")
+    return content
 
 def build_corpus(data: Dict) -> List[Dict]:
     corpus = []
@@ -156,10 +184,9 @@ def search(query: str, corpus: List[Dict], index, k: int = 5):
     return results
 
 # --- MAIN FUNCTION ---
-def response(query:str):
-    # Load JSON
-    with open(JSON_PATH, "r") as f:
-        data = json.load(f)
+def response(query: str):
+    # Load dataset from Postgres instead of JSON file
+    data = load_latest_dataset()
 
     corpus = build_corpus(data)
     if not corpus:
@@ -178,15 +205,18 @@ def response(query:str):
     if not results:
         logging.error("No search results found!")
         return "Error: No relevant results found."
+
     for r in results:
         print("SECTION:", r[0]["section"])
         print("TEXT:", r[0]["text"])
         print("DISTANCE:", r[1])
         print("---")
+
     context = "\n".join([r[0]["text"] for r in results])
     response_text = generate_response(query, context)
     print("RESPONSE:", response_text)
     return response_text
+
 
 # if __name__ == "__main__":
 #     main()

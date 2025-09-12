@@ -9,3 +9,5 @@ websockets
 speechrecognition>=3.10.0
 gTTS   
 playwright
+bs4
+psycopg2-binary
