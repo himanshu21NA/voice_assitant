@@ -33,9 +33,6 @@ URLS = {
         "https://www.stevenscreekchevy.com/serviceapptform",
         "https://www.stevenscreekchevy.com/service-department-san-jose-ca",
         "https://www.stevenscreekchevy.com/onstar.html",
-        "https://www.stevenscreekchevy.com/brake-service-san-jose-ca",
-        "https://www.stevenscreekchevy.com/tire-rotation-san-jose-ca",
-        "https://www.stevenscreekchevy.com/new-tires",
         "https://www.stevenscreekchevy.com/mobile-service-plus",
     ],
     "ev_incentives": [
@@ -78,7 +75,7 @@ async def scrape_filtered_divs(url, keywords, browser):
     logging.info(f"Scraping {url}")
     page = await browser.new_page()
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=180000)
         await asyncio.sleep(5)
         divs = await page.locator("div").all_text_contents()
         filtered = await filter_texts(divs, keywords, EXCLUDE_TERMS)
