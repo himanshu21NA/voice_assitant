@@ -1,19 +1,22 @@
-# render.yaml for deploying FastAPI backend on Render
 services:
+  # ---------------- FASTAPI BACKEND ----------------
   - type: web
     name: voice-assistant-backend
     env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    plan: free
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.11
       - key: OPENAI_API_KEY
         sync: false
     autoDeploy: true
-    rootDir: backend
+    # remove rootDir if your code is in repo root
+    # rootDir: backend
 
+  # ---------------- CRON JOB ----------------
   - type: cron
     name: scraper-cron
-    env: docker
     schedule: "*/15 * * * *"
-    command: |
-      curl -X POST https://backend.onrender.com/cron/run-scraper
+    command: curl -X POST https://voice-assistant-backend.onrender.com/cron/run-scraper
