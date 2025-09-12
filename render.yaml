@@ -10,3 +10,10 @@ services:
         sync: false
     autoDeploy: true
     rootDir: backend
+
+  - type: cron
+    name: scraper-cron
+    env: docker
+    schedule: "*/15 * * * *"
+    command: |
+      curl -X POST https://backend.onrender.com/cron/run-scraper
