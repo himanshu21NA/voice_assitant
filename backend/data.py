@@ -3,7 +3,8 @@ import asyncio
 import json
 import re
 import os
-import requests
+import httpx
+import time
 import psycopg2
 from playwright.async_api import async_playwright
 
@@ -17,14 +18,14 @@ PAGE_KEYWORDS = {
     "sales_specials": ["offer", "special", "lease", "rebate", "save"],
     "service_specials": ["service", "maintenance", "coupon", "brake", "oil change"],
     "ev_incentives": ["electric", "ev", "incentive", "rebate", "battery"],
-    "financing_deals": ["financing", "apr", "loan", "payment", "credit", "rate"]
+    "financing_deals": ["financing", "apr", "loan", "payment", "credit", "rate"],
 }
 
 EXCLUDE_TERMS = ["home", "privacy", "contact", "terms", "cookie", "menu", "navigation", "footer"]
 
 URLS = {
     "sales_specials": [
-        "https://www.stevenscreekchevy.com/newspecials.html"
+        "https://www.stevenscreekchevy.com/newspecials.html",
     ],
     "service_specials": [
         "https://www.stevenscreekchevy.com/service-parts-specials.html",
@@ -42,7 +43,7 @@ URLS = {
         "https://www.stevenscreekchevy.com/electric-vehicles",
     ],
     "financing_deals": [
-        "https://www.stevenscreekchevy.com/finance.aspx"
+        "https://www.stevenscreekchevy.com/finance.aspx",
     ],
 }
 
@@ -55,10 +56,11 @@ HEADERS = {
 }
 
 # ---------------- HELPERS ----------------
-def clean_text(text):
-    text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'[^\x00-\x7F]+', '', text)
+def clean_text(text: str) -> str:
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\x00-\x7F]+", "", text)
     return text.strip()
+
 
 async def filter_texts(texts, keywords, exclude_terms):
     filtered, seen = [], set()
@@ -71,72 +73,66 @@ async def filter_texts(texts, keywords, exclude_terms):
                 filtered.append(cleaned)
     return filtered
 
-async def scrape_filtered_divs(url, keywords):
-    logging.info(f"Starting scrape for URL: {url}")
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                logging.info(f"Attempt {attempt+1} loading {url}")
-                await page.goto(url, wait_until="domcontentloaded", timeout=300000)
-                await asyncio.sleep(5)
-                logging.info(f"Successfully loaded {url}")
-                break
-            except Exception as e:
-                logging.warning(f"Attempt {attempt+1} failed to load {url}: {e}")
-                if attempt == max_retries - 1:
-                    logging.error(f"Giving up on {url} after {max_retries} attempts.")
-                    await browser.close()
-                    return []
-                await asyncio.sleep(2)
 
+async def scrape_filtered_divs(url, keywords, browser):
+    logging.info(f"Scraping {url}")
+    page = await browser.new_page()
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(5)
         divs = await page.locator("div").all_text_contents()
-        logging.info(f"Scraped {len(divs)} divs from {url}")
         filtered = await filter_texts(divs, keywords, EXCLUDE_TERMS)
-        logging.info(f"Filtered down to {len(filtered)} entries for {url}")
-        await browser.close()
+        logging.info(f" → {len(filtered)} entries from {url}")
         return filtered
+    except Exception as e:
+        logging.error(f"Failed {url}: {e}")
+        return []
+    finally:
+        await page.close()
 
-def scrape_inventory():
+
+async def scrape_inventory():
     all_vehicles, page = [], 1
-    while True:
-        params = {"pn": page, "host": "www.stevenscreekchevy.com"}
-        resp = requests.get(BASE_URL, headers=HEADERS, params=params)
-        try:
-            data = resp.json()
-        except Exception:
-            break
-        cards = data.get("DisplayCards", [])
-        if not cards:
-            break
-        for card in cards:
-            v = card.get("VehicleCard", {})
-            vehicle = {
-                "vin": v.get("VehicleVin") or (v.get("VehicleImageCarouselModel") or {}).get("Vin"),
-                "make": v.get("VehicleMake"),
-                "model": v.get("VehicleModel"),
-                "year": v.get("VehicleYear"),
-                "trim": v.get("VehicleTrim"),
-                "price": v.get("TaggingPrice"),
-                "stocknum": v.get("VehicleStockNumber"),
-                "msrp": v.get("VehicleMsrp"),
-                "ext_color": v.get("ExteriorColorLabel"),
-                "int_color": v.get("InteriorColorLabel"),
-                "mileage": v.get("Mileage"),
-                "condition": v.get("VehicleCondition"),
-                "fuel": v.get("VehicleFuelType"),
-                "description": v.get("VehicleCommentsEncoded"),
-                "url": v.get("VehicleDetailUrl"),
-                "img": v.get("VehicleImageModel", {}).get("VehiclePhotoSrc"),
-            }
-            all_vehicles.append(vehicle)
-        if page == 1:
-            total_pages = data['Paging']['PaginationDataModel']['TotalPages']
-        elif page >= total_pages:
-            break
-        page += 1
+    async with httpx.AsyncClient() as client:
+        while True:
+            params = {"pn": page, "host": "www.stevenscreekchevy.com"}
+            try:
+                resp = await client.get(BASE_URL, headers=HEADERS, params=params, timeout=60)
+                data = resp.json()
+            except Exception:
+                break
+
+            cards = data.get("DisplayCards", [])
+            if not cards:
+                break
+
+            for card in cards:
+                v = card.get("VehicleCard", {})
+                vehicle = {
+                    "vin": v.get("VehicleVin") or (v.get("VehicleImageCarouselModel") or {}).get("Vin"),
+                    "make": v.get("VehicleMake"),
+                    "model": v.get("VehicleModel"),
+                    "year": v.get("VehicleYear"),
+                    "trim": v.get("VehicleTrim"),
+                    "price": v.get("TaggingPrice"),
+                    "stocknum": v.get("VehicleStockNumber"),
+                    "msrp": v.get("VehicleMsrp"),
+                    "ext_color": v.get("ExteriorColorLabel"),
+                    "int_color": v.get("InteriorColorLabel"),
+                    "mileage": v.get("Mileage"),
+                    "condition": v.get("VehicleCondition"),
+                    "fuel": v.get("VehicleFuelType"),
+                    "description": v.get("VehicleCommentsEncoded"),
+                    "url": v.get("VehicleDetailUrl"),
+                    "img": v.get("VehicleImageModel", {}).get("VehiclePhotoSrc"),
+                }
+                all_vehicles.append(vehicle)
+
+            if page == 1:
+                total_pages = data["Paging"]["PaginationDataModel"]["TotalPages"]
+            elif page >= total_pages:
+                break
+            page += 1
     return all_vehicles
 
 # ---------------- POSTGRES SAVE ----------------
@@ -148,7 +144,6 @@ def save_to_postgres(dataset):
     conn = psycopg2.connect(db_url)
     cur = conn.cursor()
 
-    # ✅ Create table only if it doesn't exist
     cur.execute("""
     CREATE TABLE IF NOT EXISTS scraped_data (
         id SERIAL PRIMARY KEY,
@@ -158,7 +153,6 @@ def save_to_postgres(dataset):
     );
     """)
 
-    # Insert dataset with timestamp
     cur.execute(
         """
         INSERT INTO scraped_data (category, content, created_at)
@@ -172,42 +166,49 @@ def save_to_postgres(dataset):
     conn.close()
     logging.info("✅ Dataset inserted into Postgres with timestamp")
 
-
-# ---------------- MAIN FUNCTION ----------------
+# ---------------- MAIN SCRAPER ----------------
 async def run_scraper():
+    
+    start_time = time.time()
     dataset = {}
 
-    for category, urls in URLS.items():
-        keywords = PAGE_KEYWORDS.get(category, [])
-        all_entries = []
-        for url in urls:
-            logging.info(f"Scraping {category} from {url}")
-            entries = await scrape_filtered_divs(url, keywords)
-            logging.info(f"  → Found {len(entries)} entries")
-            all_entries.extend(entries)
-        dataset[category] = all_entries
-        logging.info(f"  → Total {len(dataset[category])} entries in {category}")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+
+        for category, urls in URLS.items():
+            keywords = PAGE_KEYWORDS.get(category, [])
+            tasks = [scrape_filtered_divs(url, keywords, browser) for url in urls]
+            results = await asyncio.gather(*tasks)
+            all_entries = [entry for sublist in results for entry in sublist]
+            dataset[category] = all_entries
+            logging.info(f" → Total {len(all_entries)} entries in {category}")
+
+        await browser.close()
 
     logging.info("Fetching vehicle inventory via API...")
-    dataset["vehicle_inventory"] = scrape_inventory()
-    logging.info(f"  → Found {len(dataset['vehicle_inventory'])} vehicles")
+    dataset["vehicle_inventory"] = await scrape_inventory()
+    logging.info(f" → Found {len(dataset['vehicle_inventory'])} vehicles")
 
     save_to_postgres(dataset)
+    end_time = time.time()
+    total_time = end_time - start_time
+    print(f"✅ Scraper completed in {total_time:.2f} seconds.")
     return dataset
-
 
 # import logging
 # import asyncio
 # import json
 # import re
+# import os
 # import requests
+# import psycopg2
 # from playwright.async_api import async_playwright
-
 
 # logging.basicConfig(
 #     level=logging.INFO,
 #     format="%(asctime)s [%(levelname)s] %(message)s",
 # )
+
 # # ---------------- CONFIG ----------------
 # PAGE_KEYWORDS = {
 #     "sales_specials": ["offer", "special", "lease", "rebate", "save"],
@@ -218,7 +219,6 @@ async def run_scraper():
 
 # EXCLUDE_TERMS = ["home", "privacy", "contact", "terms", "cookie", "menu", "navigation", "footer"]
 
-# # ---------------- CONFIG ----------------
 # URLS = {
 #     "sales_specials": [
 #         "https://www.stevenscreekchevy.com/newspecials.html"
@@ -242,7 +242,6 @@ async def run_scraper():
 #         "https://www.stevenscreekchevy.com/finance.aspx"
 #     ],
 # }
-
 
 # # Vehicle API
 # BASE_URL = "https://www.stevenscreekchevy.com/api/vhcliaa/vehicle-pages/cosmos/srp/vehicles/16823/3165452"
@@ -302,16 +301,13 @@ async def run_scraper():
 #     while True:
 #         params = {"pn": page, "host": "www.stevenscreekchevy.com"}
 #         resp = requests.get(BASE_URL, headers=HEADERS, params=params)
-
 #         try:
 #             data = resp.json()
 #         except Exception:
 #             break
-
 #         cards = data.get("DisplayCards", [])
 #         if not cards:
 #             break
-
 #         for card in cards:
 #             v = card.get("VehicleCard", {})
 #             vehicle = {
@@ -327,13 +323,12 @@ async def run_scraper():
 #                 "int_color": v.get("InteriorColorLabel"),
 #                 "mileage": v.get("Mileage"),
 #                 "condition": v.get("VehicleCondition"),
-#                 "fuel":v.get("VehicleFuelType"),
+#                 "fuel": v.get("VehicleFuelType"),
 #                 "description": v.get("VehicleCommentsEncoded"),
 #                 "url": v.get("VehicleDetailUrl"),
 #                 "img": v.get("VehicleImageModel", {}).get("VehiclePhotoSrc"),
 #             }
 #             all_vehicles.append(vehicle)
-
 #         if page == 1:
 #             total_pages = data['Paging']['PaginationDataModel']['TotalPages']
 #         elif page >= total_pages:
@@ -341,41 +336,63 @@ async def run_scraper():
 #         page += 1
 #     return all_vehicles
 
+# # ---------------- POSTGRES SAVE ----------------
+# def save_to_postgres(dataset):
+#     db_url = os.getenv("DATABASE_URL")
+#     if not db_url:
+#         raise RuntimeError("DATABASE_URL not set in environment variables")
+
+#     conn = psycopg2.connect(db_url)
+#     cur = conn.cursor()
+
+#     # ✅ Create table only if it doesn't exist
+#     cur.execute("""
+#     CREATE TABLE IF NOT EXISTS scraped_data (
+#         id SERIAL PRIMARY KEY,
+#         category TEXT NOT NULL,
+#         content JSONB NOT NULL,
+#         created_at TIMESTAMP DEFAULT NOW()
+#     );
+#     """)
+
+#     # Insert dataset with timestamp
+#     cur.execute(
+#         """
+#         INSERT INTO scraped_data (category, content, created_at)
+#         VALUES (%s, %s, NOW())
+#         """,
+#         ("stevenscreek", json.dumps(dataset))
+#     )
+
+#     conn.commit()
+#     cur.close()
+#     conn.close()
+#     logging.info("✅ Dataset inserted into Postgres with timestamp")
+
+
 # # ---------------- MAIN FUNCTION ----------------
 # async def run_scraper():
+#     import time
+#     start_time = time.time()
 #     dataset = {}
 
-#     # Scrape specials
 #     for category, urls in URLS.items():
 #         keywords = PAGE_KEYWORDS.get(category, [])
 #         all_entries = []
-
 #         for url in urls:
-#             print(f"Scraping {category} from {url}")
+#             logging.info(f"Scraping {category} from {url}")
 #             entries = await scrape_filtered_divs(url, keywords)
-#             print(f"  → Found {len(entries)} entries")
+#             logging.info(f"  → Found {len(entries)} entries")
 #             all_entries.extend(entries)
-
 #         dataset[category] = all_entries
-#         print(f"  → Total {len(dataset[category])} entries in {category}")
+#         logging.info(f"  → Total {len(dataset[category])} entries in {category}")
 
-#     # Add vehicle inventory via API
-#     print("Fetching vehicle inventory via API...")
+#     logging.info("Fetching vehicle inventory via API...")
 #     dataset["vehicle_inventory"] = scrape_inventory()
-#     print(f"  → Found {len(dataset['vehicle_inventory'])} vehicles")
+#     logging.info(f"  → Found {len(dataset['vehicle_inventory'])} vehicles")
 
-#     # Save JSON
-#     with open("stevenscreek_dataset.json", "w", encoding="utf-8") as f:
-#         json.dump(dataset, f, ensure_ascii=False, indent=2)
-
-#     print("\n✅ Data saved to stevenscreek_dataset.json")
+#     save_to_postgres(dataset)
+#     end_time = time.time()
+#     total_time = end_time - start_time
+#     print(f"✅ Scraper completed in {total_time:.2f} seconds.")
 #     return dataset
-
-
-# # def main():
-# #     asyncio.run(run_scraper())
-
-
-# # # ---------------- ENTRYPOINT ----------------
-# # if __name__ == "__main__":
-# #     main()
