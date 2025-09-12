@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import json
 import re
@@ -68,6 +69,7 @@ async def filter_texts(texts, keywords, exclude_terms):
     return filtered
 
 async def scrape_filtered_divs(url, keywords):
+    logging.info(f"Starting scrape for URL: {url}")
     import logging
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -75,8 +77,10 @@ async def scrape_filtered_divs(url, keywords):
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=300000)
+                logging.info(f"Attempt {attempt+1} loading {url}")
+                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 await asyncio.sleep(5)
+                logging.info(f"Successfully loaded {url}")
                 break
             except Exception as e:
                 logging.warning(f"Attempt {attempt+1} failed to load {url}: {e}")
@@ -87,7 +91,9 @@ async def scrape_filtered_divs(url, keywords):
                 await asyncio.sleep(2)
 
         divs = await page.locator("div").all_text_contents()
+        logging.info(f"Scraped {len(divs)} divs from {url}")
         filtered = await filter_texts(divs, keywords, EXCLUDE_TERMS)
+        logging.info(f"Filtered down to {len(filtered)} entries for {url}")
         await browser.close()
         return filtered
 
