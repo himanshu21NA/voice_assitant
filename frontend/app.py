@@ -65,15 +65,16 @@ if st.button("Send") and text_input:
     st.session_state.messages.append(("You", text_input))
     try:
         # Call FastAPI backend for RAG response
-        api_url = "http://localhost:8000/process_text/"
+        api_url = os.getenv("BACKEND_API_URL")
+
         st.write(f"Sending request to: {api_url} with text: {text_input}")
         response = requests.post(api_url, params={"text": text_input})
         st.write(f"Response status code: {response.status_code}")
-        st.write(f"Response content: {response.content}")
+        # st.write(f"Response content: {response.content}")
         if response.status_code == 200:
             try:
                 data = response.json()
-                st.write(f"Parsed JSON: {data}")
+                # st.write(f"Parsed JSON: {data}")
                 assistant_reply = data.get("response_text", "Sorry, no response.")
             except Exception as e:
                 assistant_reply = f"Error parsing JSON: {e}"

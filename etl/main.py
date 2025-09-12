@@ -2,8 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
+
 # Local imports
-from rag import response
+from data import run_scraper
 
 # ---------------- APP INIT ----------------
 app = FastAPI()
@@ -22,13 +23,11 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+
+
 # ---------------- API ENDPOINTS ----------------
-@app.post("/process_text/")
-async def process_text(text: str):
-    """Takes text, generates RAG response + TTS audio."""
-    try:
-        response_text = response(text) or "Sorry, I could not generate a response."
-        return {"response_text": response_text}
-    except Exception as e:
-        logging.error(f"Error in /process_text/: {e}")
-        return {"response_text": "Error: Could not process request.", "audio_file": None}
+@app.post("/cron/run-scraper")
+async def cron_run_scraper():
+    """Dedicated endpoint for Render cron jobs."""
+    logging.info("Cron job triggered: running scraper")
+    return await run_scraper()

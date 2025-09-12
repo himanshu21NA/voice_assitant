@@ -4,10 +4,6 @@ requests
 openai
 faiss-cpu>=1.7.4
 numpy>=1.23.0
-scikit-learn>=1.2.0
-websockets
-speechrecognition>=3.10.0
-gTTS   
+scikit-learn>=1.2.0 
 playwright
 bs4
-psycopg2-binary
