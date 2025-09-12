@@ -3,7 +3,7 @@ services:
   - type: web
     name: voice-assistant-backend
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && playwright install chromium
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     plan: free
     envVars:
@@ -19,4 +19,4 @@ services:
   - type: cron
     name: scraper-cron
     schedule: "*/15 * * * *"
-    command: curl -X POST https://voice-assistant-backend.onrender.com/cron/run-scraper
+    command: curl -X POST https://voice-assistant-znms.onrender.com/cron/run-scraper
