@@ -6,7 +6,7 @@ import os
 import random
 import io
 
-st.title("🎤 Simple Voice Chat")
+st.title("🎤 Voice Assitant")
 
 # Initialize session state
 if 'transcribed_text' not in st.session_state:
@@ -14,17 +14,9 @@ if 'transcribed_text' not in st.session_state:
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 
-# Dummy responses
-dummy_responses = [
-    "That's interesting!",
-    "I understand what you mean.",
-    "Tell me more about that.",
-    "That sounds great!",
-    "I see your point.",
-    "Thanks for sharing that with me.",
-    "That's a good question.",
-    "I think you're right about that."
-]
+
+# RAG import
+import requests
 
 # Voice input
 audio_input = st.audio_input("Record something")
@@ -71,23 +63,39 @@ if st.button("Clear"):
 if st.button("Send") and text_input:
     # Add messages to history
     st.session_state.messages.append(("You", text_input))
-    response = random.choice(dummy_responses)
-    st.session_state.messages.append(("Assistant", response))
-    
-    # Generate TTS for the response
     try:
-        tts = gTTS(text=response, lang='en')
-        # Use BytesIO for in-memory audio handling
-        audio_buffer = io.BytesIO()
-        tts.write_to_fp(audio_buffer)
-        audio_buffer.seek(0)
-        
-        # Store audio in session state
-        st.session_state.latest_audio = audio_buffer.getvalue()
-        
+        # Call FastAPI backend for RAG response
+        api_url = "http://localhost:8000/process_text/"
+        st.write(f"Sending request to: {api_url} with text: {text_input}")
+        response = requests.post(api_url, params={"text": text_input})
+        st.write(f"Response status code: {response.status_code}")
+        st.write(f"Response content: {response.content}")
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                st.write(f"Parsed JSON: {data}")
+                assistant_reply = data.get("response_text", "Sorry, no response.")
+            except Exception as e:
+                assistant_reply = f"Error parsing JSON: {e}"
+                st.write(assistant_reply)
+            st.session_state.messages.append(("Assistant", assistant_reply))
+            # Generate TTS for the response
+            try:
+                tts = gTTS(text=assistant_reply, lang='en')
+                audio_buffer = io.BytesIO()
+                tts.write_to_fp(audio_buffer)
+                audio_buffer.seek(0)
+                st.session_state.latest_audio = audio_buffer.getvalue()
+            except Exception as e:
+                st.error(f"TTS Error: {e}")
+        else:
+            error_msg = f"Error: Could not get response from backend. Status code: {response.status_code}"
+            st.session_state.messages.append(("Assistant", error_msg))
+            st.write(error_msg)
     except Exception as e:
-        st.error(f"TTS Error: {e}")
-    
+        error_msg = f"Error: {e}"
+        st.session_state.messages.append(("Assistant", error_msg))
+        st.write(error_msg)
     # Clear the text input
     st.session_state.transcribed_text = ""
     st.rerun()
@@ -103,40 +111,3 @@ if st.session_state.messages:
             i == len(st.session_state.messages) - 1 and 
             'latest_audio' in st.session_state):
             st.audio(st.session_state.latest_audio, format="audio/mp3")
-
-# import streamlit as st
-# import asyncio
-# import websockets
-# import json
-
-# st.title("WebSocket Connection Test")
-
-# async def test_connection():
-#     uri = "ws://localhost:8000/ws/realtime"
-#     try:
-#         async with websockets.connect(uri, timeout=5) as websocket:
-#             # Send a test message
-#             test_message = {"test": "connection"}
-#             await websocket.send(json.dumps(test_message))
-            
-#             # Try to receive a response
-#             try:
-#                 response = await asyncio.wait_for(websocket.recv(), timeout=5)
-#                 return f"Success! Server responded: {response}"
-#             except asyncio.TimeoutError:
-#                 return "Connected but no response received within 5 seconds"
-                
-#     except ConnectionRefusedError:
-#         return "Connection refused - server not running or wrong port"
-#     except Exception as e:
-#         return f"Connection failed: {e}"
-
-# if st.button("Test WebSocket Connection"):
-    with st.spinner("Testing connection..."):
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(test_connection())
-            st.write(result)
-        finally:
-            loop.close()

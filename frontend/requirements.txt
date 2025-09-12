@@ -1,0 +1,6 @@
+streamlit
+speechrecognition
+gtts
+requests
+numpy
+Pillow
