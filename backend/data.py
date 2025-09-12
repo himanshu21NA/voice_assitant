@@ -73,7 +73,6 @@ async def filter_texts(texts, keywords, exclude_terms):
 
 async def scrape_filtered_divs(url, keywords):
     logging.info(f"Starting scrape for URL: {url}")
-    import logging
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
