@@ -32,8 +32,6 @@ URLS = {
         "https://www.stevenscreekchevy.com/service",
         "https://www.stevenscreekchevy.com/serviceapptform",
         "https://www.stevenscreekchevy.com/service-department-san-jose-ca",
-        "https://www.stevenscreekchevy.com/onstar.html",
-        "https://www.stevenscreekchevy.com/mobile-service-plus",
     ],
     "ev_incentives": [
         "https://www.stevenscreekchevy.com/ev-incentives",
