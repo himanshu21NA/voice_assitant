@@ -146,11 +146,11 @@ def save_to_postgres(dataset):
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS scraped_data (
-        id SERIAL PRIMARY KEY,
-        category TEXT NOT NULL,
-        content JSONB NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW()
-    );
+    id SERIAL PRIMARY KEY,
+    category TEXT NOT NULL,
+    content JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')
+);
     """)
 
     cur.execute(
