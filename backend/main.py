@@ -1,28 +1,15 @@
-from fastapi import FastAPI
-from data import run_scraper
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
-import asyncio
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-
-import pyttsx3
-import uuid
-import os
-
-# RAG imports
-from rag import response
-import logging
-from concurrent.futures import ThreadPoolExecutor
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from rag import stream_response
+from database.chat_history import create_new_session, ensure_chat_history_table_exists
+from utils.logging import Logger
 
 app = FastAPI()
-# ---------------- FASTAPI ----------------
-@app.get("/data")
-async def get_data():
-    return await run_scraper()
+logger = Logger(__name__)
 
-
-# Allow CORS for Streamlit frontend
+# Allow frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,34 +17,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize pyttsx3 TTS engine once
-tts_engine = pyttsx3.init()
+# Ensure chat_history table exists on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database tables on startup"""
+    logger.info("Starting up application...")
+    ensure_chat_history_table_exists()
+    logger.info("Application startup completed")
 
+class ChatRequest(BaseModel):
+    text: str
+    session_id: str = None  # Optional, will create new if not provided
 
+class SessionResponse(BaseModel):
+    session_id: str
 
-@app.post("/process_text/")
-async def process_text(text: str):
+@app.post("/create_session", response_model=SessionResponse)
+async def create_session():
+    """Create a new chat session"""
     try:
-        # Get response from RAG
-        response_text = response(text)
-        logging.info(f"RAG response: {response_text}")
-        if not response_text:
-            response_text = "Sorry, I could not generate a response."
-        # Generate TTS audio file in a thread to avoid blocking
-        filename = f"tts_{uuid.uuid4()}.mp3"
-        loop = asyncio.get_event_loop()
-        def tts_task():
-            tts_engine.save_to_file(response_text, filename)
-            tts_engine.runAndWait()
-        await loop.run_in_executor(ThreadPoolExecutor(), tts_task)
-        return {"response_text": response_text, "audio_file": filename}
+        session_id = create_new_session()
+        return SessionResponse(session_id=session_id)
     except Exception as e:
-        logging.error(f"Error in /process_text/: {e}")
-        return {"response_text": "Error: Could not process request.", "audio_file": None}
+        logger.error(f"Error creating session: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating session: {e}")
 
-@app.get("/audio/{filename}")
-async def get_audio(filename: str):
-    filepath = os.path.join(os.getcwd(), filename)
-    if os.path.exists(filepath):
-        return FileResponse(filepath, media_type="audio/mpeg")
-    return {"error": "File not found"}
+@app.post("/process_text")
+async def process_text(request: ChatRequest):
+    """Process text with optional session management"""
+    try:
+        # Create new session if not provided
+        session_id = request.session_id
+        if not session_id:
+            session_id = create_new_session()
+            logger.info(f"Created new session for request: {session_id}")
+        
+        return StreamingResponse(
+            stream_response(request.text, session_id),
+            media_type="text/plain",
+            headers={"X-Session-ID": session_id}  # Return session ID in header
+        )
+    except Exception as e:
+        logger.error(f"Error in /process_text/: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {e}")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "message": "RAG API is running"}

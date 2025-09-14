@@ -1,0 +1,14 @@
+# ETL requirements
+pandas
+numpy
+sqlalchemy
+psycopg2-binary
+requests
+python-dotenv
+playwright
+bs4
+psycopg2-binary
+fastapi
+uvicorn
+requests
+httpx
