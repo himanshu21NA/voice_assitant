@@ -1,19 +1,20 @@
-import json
-import hashlib
-from typing import List, Dict
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from openai import OpenAI
-import psycopg2
-import os
-import faiss
-import numpy as np
 import logging
+from openai import OpenAI
 from config import OPENAI_API_KEY, OPENAI_MODEL
-from prompt import GENERATION_PROMPT
+from prompts import GENERATION_PROMPT
+
+# Local imports
+from database.chat_history import get_recent_chat_history, save_chat_history, format_chat_history
+from database.data_loader import load_latest_dataset
+from processing.corpus_builder import build_corpus
+from processing.query_enhancer import enhance_query
+from embedding.embedder import embed_texts, build_faiss_index
+from embedding.search import search
+from utils.logging import Logger
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
+logger = Logger(__name__)
 
 if not OPENAI_API_KEY:
     logging.error("OPENAI_API_KEY is not set. Please set the environment variable.")
@@ -27,373 +28,83 @@ try:
 except Exception as e:
     logging.error(f"Failed to initialize OpenAI client: {e}")
 
-
-# --- HELPERS ---
-def normalize(text: str) -> str:
-    return " ".join(text.lower().split())
-
-def deduplicate_texts(texts: List[str], threshold: float = 0.9) -> List[str]:
-    texts = [normalize(t) for t in texts if t.strip()]
-    if not texts:
-        return []
-    unique, hashes = [], set()
-    for t in texts:
-        h = hashlib.md5(t.encode()).hexdigest()
-        if h not in hashes:
-            unique.append(t)
-            hashes.add(h)
-    if len(unique) < 2:
-        return unique
-    try:
-        vectorizer = TfidfVectorizer().fit_transform(unique)
-        vectors = vectorizer.toarray()
-        keep = [True] * len(unique)
-        for i in range(len(unique)):
-            if not keep[i]:
-                continue
-            sims = cosine_similarity([vectors[i]], vectors[i+1:])[0]
-            for j, sim in enumerate(sims, start=i+1):
-                if sim > threshold:
-                    keep[j] = False
-        return [t for t, k in zip(unique, keep) if k]
-    except Exception as e:
-        print(f"[WARN] Dedup skipped due to: {e}")
-        return unique
-
-def chunk_text(text: str, max_words: int = 100) -> List[str]:
-    words = text.split()
-    return [" ".join(words[i:i+max_words]) for i in range(0, len(words), max_words)]
-
-def save_corpus(corpus, path="cleaned_corpus.json"):
-    with open(path, "w") as f:
-        json.dump(corpus, f, indent=2)
-
-def load_latest_dataset():
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        raise RuntimeError("DATABASE_URL not set")
-    conn = psycopg2.connect(db_url)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT content, created_at
-        FROM scraped_data
-        WHERE category = %s
-        ORDER BY created_at DESC
-        LIMIT 1
-    """, ("stevenscreek",))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    if not row:
-        raise RuntimeError("No dataset found in DB")
-    content, timestamp = row
-    logging.info(f"Loaded dataset updated at {timestamp}")
-    return content
-
-def build_corpus(data: Dict) -> List[Dict]:
-    corpus = []
-    for section, entries in data.items():
-        if isinstance(entries, list):
-            if all(isinstance(e, str) for e in entries):
-                cleaned = deduplicate_texts(entries)
-                for idx, text in enumerate(cleaned):
-                    for chunk in chunk_text(text):
-                        corpus.append({
-                            "section": section,
-                            "chunk_id": f"{section}_{idx}",
-                            "text": chunk
-                        })
-            elif all(isinstance(e, dict) for e in entries):
-                for e in entries:
-                    text = f"{e.get('year','')} {e.get('make','')} {e.get('model','')}, Trim: {e.get('trim','')}, Price: {e.get('price','')}, Fuel Type: {e.get('fuel','')}, Description: {e.get('description','')}"
-                    corpus.append({
-                        "section": section,
-                        "chunk_id": e.get("vin", ""),
-                        "text": text,
-                        "metadata": e
-                    })
-    return corpus
-
-def embed_texts(texts: List[str], model: str = "text-embedding-3-small") -> np.ndarray:
-    embeddings = []
-    for i in range(0, len(texts), 100):
-        batch = texts[i:i+100]
-        resp = client.embeddings.create(model=model, input=batch)
-        embeddings.extend([e.embedding for e in resp.data])
-    return np.array(embeddings).astype("float32")
-
-def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexFlatL2:
-    dim = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dim)
-    index.add(embeddings)
-    return index
-
-def search(query: str, corpus: List[Dict], index, k: int = 5):
-    q_emb = client.embeddings.create(model="text-embedding-3-small", input=[query]).data[0].embedding
-    print("Query embedded.")
-    q_emb = np.array([q_emb]).astype("float32")
-    print("Query converted to numpy array.")
-    D, I = index.search(q_emb, k)
-    print("FAISS search completed.")
-    results = []
-    for j, i in enumerate(I[0]):
-        if i < len(corpus):
-            results.append((corpus[i], float(D[0][j])))
-    return results
-
-
 # --- STREAMING RESPONSE ---
-def stream_response(user_query: str):
-    data = load_latest_dataset()
-    print("Dataset loaded.")
-    corpus = build_corpus(data)
-    print(f"Corpus built with {len(corpus)} entries.")
-    texts = [c["text"] for c in corpus]
-    print("Texts extracted.")
-    embeddings = embed_texts(texts)
-    print("Texts embedded.")
-    index = build_faiss_index(embeddings)
-    print("FAISS index built.")
-    results = search(user_query, corpus, index, k=10)
-    print(f"Search completed with {len(results)} results.")
-    context = "\n".join([r[0]["text"] for r in results])
+def stream_response(user_query: str, session_id: str):
+    """Main function to handle user queries with streaming response and session management"""
+    try:
+        # Get recent chat history for this session
+        chat_history = get_recent_chat_history(session_id, limit=5)
+        logging.info(f"Retrieved {len(chat_history)} chat history entries for session {session_id}")
+        
+        # Enhance query using chat history
+        enhanced_query = enhance_query(user_query, chat_history)
+        logging.info(f"Using enhanced query for search: '{enhanced_query}'")
+        
+        data = load_latest_dataset()
+        logging.info("Dataset loaded successfully")
+        
+        corpus = build_corpus(data)
+        logging.info(f"Corpus built with {len(corpus)} entries")
+        
+        texts = [c["text"] for c in corpus]
+        logging.debug("Texts extracted from corpus")
+        
+        embeddings = embed_texts(texts)
+        logging.info("Text embeddings created successfully")
+        
+        index = build_faiss_index(embeddings)
+        logging.info("FAISS index built successfully")
+        
+        # Use enhanced query for search
+        results = search(enhanced_query, corpus, index, k=10)
+        logging.info(f"Search completed with {len(results)} results using enhanced query")
+        
+        context = "\n".join([r[0]["text"] for r in results])
 
-    prompt = f"{GENERATION_PROMPT}\n\nContext: {context}\n\nUser: {user_query}\nAssistant:"
+        # Format chat history for the prompt (using original formatting)
+        chat_context = format_chat_history(chat_history)
+        
+        # Build prompt with chat history (use original user query in prompt, not enhanced)
+        prompt = f"{GENERATION_PROMPT}\n\n{chat_context}Context: {context}\n\nUser: {user_query}\nAssistant:"
 
-    def token_generator():
-        try:
-            stream = client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                stream=True,
-            )
-            for chunk in stream:
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    yield delta.content
-        except Exception as e:
-            yield f"[ERROR] {e}"
+        # Collect the full response for saving to chat history
+        full_response = ""
+        
+        def token_generator():
+            nonlocal full_response
+            try:
+                logging.info("Starting OpenAI streaming response")
+                stream = client.chat.completions.create(
+                    model=OPENAI_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    stream=True,
+                )
+                
+                for chunk in stream:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        full_response += delta.content
+                        yield delta.content
+                
+                # Save to chat history after streaming is complete (use original query)
+                if full_response.strip():
+                    save_chat_history(session_id, user_query, full_response)
+                    logging.info(f"Response streaming completed and saved to chat history for session {session_id}")
+                    
+            except Exception as e:
+                error_msg = f"[ERROR] {e}"
+                logging.error(f"Error during streaming response: {e}")
+                full_response = error_msg
+                save_chat_history(session_id, user_query, error_msg)
+                yield error_msg
 
-
-    return token_generator()
-
-# import json
-# import hashlib
-# from typing import List, Dict
-# from sklearn.feature_extraction.text import TfidfVectorizer
-# from sklearn.metrics.pairwise import cosine_similarity
-# from openai import OpenAI
-# import psycopg2
-# import os
-
-# import faiss
-# import numpy as np
-# # --- PROMPT ---
-# from prompt import GENERATION_PROMPT
-# from config import OPENAI_API_KEY, OPENAI_MODEL
-# import logging
-
-# # Setup logging
-# logging.basicConfig(level=logging.INFO)
-
-# if not OPENAI_API_KEY:
-#     logging.error("OPENAI_API_KEY is not set. Please set the environment variable.")
-# else:
-#     logging.info("OPENAI_API_KEY loaded successfully.")
-# # --- GENERATION FUNCTION ---
-# def generate_response(user_query: str, context: str = "") -> str:
-#     """
-#     Generate a response using the assistant prompt, user query, and optional context.
-#     """
-#     prompt = f"{GENERATION_PROMPT}\n\nContext: {context}\n\nUser: {user_query}\nAssistant:"
-#     logging.info(f"Calling OpenAI with prompt: {prompt[:100]}... (truncated)")
-#     try:
-#         response = client.chat.completions.create(
-#             model=OPENAI_MODEL,
-#             messages=[{"role": "user", "content": prompt}],
-#             temperature=0.0)
-#         logging.info("OpenAI response received successfully.")
-#         return response.choices[0].message.content.strip()
-#     except Exception as e:
-#         logging.error(f"Error calling OpenAI API: {e}")
-#         return "Error: Could not generate response."
-
-# # --- CONFIG ---
-# JSON_PATH = "stevenscreek_dataset.json"
-# EMBED_MODEL = "text-embedding-3-small"  # or "text-embedding-3-large"
-# try:
-#     client = OpenAI(api_key=OPENAI_API_KEY)
-#     logging.info("OpenAI client initialized.")
-# except Exception as e:
-#     logging.error(f"Failed to initialize OpenAI client: {e}")
-
-
-# # --- HELPERS ---
-# def normalize(text: str) -> str:
-#     return " ".join(text.lower().split())
-
-# def deduplicate_texts(texts: List[str], threshold: float = 0.9) -> List[str]:
-#     texts = [normalize(t) for t in texts if t.strip()]
-#     if not texts:
-#         return []
-
-#     # Exact deduplication
-#     unique = []
-#     hashes = set()
-#     for t in texts:
-#         h = hashlib.md5(t.encode()).hexdigest()
-#         if h not in hashes:
-#             unique.append(t)
-#             hashes.add(h)
-
-#     if len(unique) < 2:
-#         return unique
-
-#     try:
-#         # Near-duplicate filtering using cosine similarity
-#         vectorizer = TfidfVectorizer().fit_transform(unique)
-#         vectors = vectorizer.toarray()
-#         keep = [True] * len(unique)
-
-#         for i in range(len(unique)):
-#             if not keep[i]:
-#                 continue
-#             if i + 1 >= len(unique):  # avoid empty slice
-#                 break
-#             sims = cosine_similarity([vectors[i]], vectors[i+1:])[0]
-#             for j, sim in enumerate(sims, start=i+1):
-#                 if sim > threshold:
-#                     keep[j] = False
-
-#         return [t for t, k in zip(unique, keep) if k]
-
-#     except Exception as e:
-#         print(f"[WARN] Dedup skipped due to: {e}")
-#         return unique
-
-
-# def chunk_text(text: str, max_words: int = 100) -> List[str]:
-#     words = text.split()
-#     return [" ".join(words[i:i+max_words]) for i in range(0, len(words), max_words)]
-
-# def save_corpus(corpus, path="cleaned_corpus.json"):
-#     with open(path, "w") as f:
-#         json.dump(corpus, f, indent=2)
-
-# # # --- Load corpus ---
-# # def load_corpus(path="cleaned_corpus.json"):
-# #     with open(path, "r") as f:
-# #         return json.load(f)
-
-# def load_latest_dataset():
-#     db_url = os.getenv("DATABASE_URL")
-#     if not db_url:
-#         raise RuntimeError("DATABASE_URL not set")
-
-#     conn = psycopg2.connect(db_url)
-#     cur = conn.cursor()
-#     cur.execute("""
-#         SELECT content, created_at
-#         FROM scraped_data
-#         WHERE category = %s
-#         ORDER BY created_at DESC
-#         LIMIT 1
-#     """, ("stevenscreek",))
-
-#     row = cur.fetchone()
-#     cur.close()
-#     conn.close()
-
-#     if not row:
-#         raise RuntimeError("No dataset found in DB")
-
-#     content, timestamp = row
-#     logging.info(f"Loaded dataset updated at {timestamp}")
-#     return content
-
-# def build_corpus(data: Dict) -> List[Dict]:
-#     corpus = []
-#     for section, entries in data.items():
-#         if isinstance(entries, list):
-#             if all(isinstance(e, str) for e in entries):
-#                 cleaned = deduplicate_texts(entries)
-#                 for idx, text in enumerate(cleaned):
-#                     for chunk in chunk_text(text):
-#                         corpus.append({
-#                             "section": section,
-#                             "chunk_id": f"{section}_{idx}",
-#                             "text": chunk
-#                         })
-#             elif all(isinstance(e, dict) for e in entries):  # structured inventory
-#                 for e in entries:
-#                     text = f"{e.get('year','')} {e.get('make','')} {e.get('model','')}, Trim: {e.get('trim','')}, Price: {e.get('price','')}, Fuel Type: {e.get('fuel','')}, Description: {e.get('description','')}"
-#                     corpus.append({
-#                         "section": section,
-#                         "chunk_id": e.get("vin", ""),
-#                         "text": text,
-#                         "metadata": e
-#                     })
-
-#     return corpus
-
-# def embed_texts(texts: List[str], model: str = EMBED_MODEL) -> np.ndarray:
-#     embeddings = []
-#     for i in range(0, len(texts), 100):  # batch API calls
-#         batch = texts[i:i+500]
-#         resp = client.embeddings.create(model=model, input=batch)
-#         embeddings.extend([e.embedding for e in resp.data])
-#     return np.array(embeddings).astype("float32")
-
-# def build_faiss_index(embeddings: np.ndarray) -> faiss.IndexFlatL2:
-#     dim = embeddings.shape[1]
-#     index = faiss.IndexFlatL2(dim)
-#     index.add(embeddings)
-#     return index
-
-# def search(query: str, corpus: List[Dict], index, k: int = 5):
-#     q_emb = client.embeddings.create(model=EMBED_MODEL, input=[query]).data[0].embedding
-#     q_emb = np.array([q_emb]).astype("float32")
-#     D, I = index.search(q_emb, k)
-#     results = []
-#     for j, i in enumerate(I[0]):
-#         if i < len(corpus):
-#             results.append((corpus[i], float(D[0][j])))
-#         else:
-#             logging.warning(f"Index {i} out of bounds for corpus of size {len(corpus)}.")
-#     return results
-
-# # --- MAIN FUNCTION ---
-# def response(query: str):
-#     # Load dataset from Postgres instead of JSON file
-#     data = load_latest_dataset()
-
-#     corpus = build_corpus(data)
-#     if not corpus:
-#         logging.error("Corpus is empty!")
-#         return "Error: No data available."
-
-#     save_corpus(corpus, path="cleaned_corpus.json")
-#     texts = [c["text"] for c in corpus]
-#     embeddings = embed_texts(texts)
-#     if embeddings.size == 0:
-#         logging.error("Embeddings are empty!")
-#         return "Error: No embeddings generated."
-
-#     index = build_faiss_index(embeddings)
-#     results = search(query, corpus, index, k=10)
-#     if not results:
-#         logging.error("No search results found!")
-#         return "Error: No relevant results found."
-
-#     for r in results:
-#         print("SECTION:", r[0]["section"])
-#         print("TEXT:", r[0]["text"])
-#         print("DISTANCE:", r[1])
-#         print("---")
-
-#     context = "\n".join([r[0]["text"] for r in results])
-#     response_text = generate_response(query, context)
-#     print("RESPONSE:", response_text)
-#     return response_text
-
+        return token_generator()
+        
+    except Exception as e:
+        logging.error(f"Error in stream_response: {e}")
+        def error_generator():
+            error_msg = f"[ERROR] Failed to process request: {e}"
+            save_chat_history(session_id, user_query, error_msg)
+            yield error_msg
+        return error_generator()
