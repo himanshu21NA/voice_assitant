@@ -1,43 +1,53 @@
-# Voice Assistant
+# Real-time Voice Assistant
 
-This repository contains the source code for a sophisticated conversational AI system. The application provides a web-based user interface for users to interact with a chatbot using either text or voice. The backend is powered by a Retrieval-Augmented Generation (RAG) pipeline, enabling it to answer queries based on a corpus of dealership-specific data.
+This repository contains the source code for a real-time, bidirectional voice assistant. The application uses a pure HTML/JavaScript frontend and a Python backend to create a low-latency conversational experience, powered by OpenAI's Realtime API and a custom Retrieval-Augmented Generation (RAG) pipeline.
+
+---
+
+### Developer Note
+This project, particularly the real-time voice functionality, was built as a proof-of-concept in a single day. Due to this rapid development timeline, the project is currently set up for **local execution only** and has not been deployed to any cloud services like Render. The focus was on validating the architecture, so some areas may be unrefined.
 
 ---
 
 ## Architecture Overview
 
-The system follows a distributed, multi-tier architecture composed of three main services deployed on Render:
+The system uses a WebSocket-first architecture to achieve low-latency communication.
 
-1.  **Frontend Service (Web Service)**: A Streamlit web application that serves as the user interface.
-2.  **Backend Service (Web Service)**: A FastAPI application that exposes a REST API for the RAG pipeline, handles chat sessions, and streams responses.
-3.  **ETL Service (Cron Job)**: A Python script responsible for periodically scraping dealership data and loading it into the database.
-
-These services communicate with a central **PostgreSQL Database** that acts as the single source of truth for dealership data and chat history.
+1.  **Frontend**: A static HTML/JavaScript page that captures microphone audio using the Web Audio API and streams it to the backend via a WebSocket. It also handles playing back the AI's audio response.
+2.  **Backend**: A FastAPI (Python) application that acts as an intelligent proxy. It manages the WebSocket connection from the client and a second WebSocket connection to the OpenAI Realtime API. It injects RAG context on-the-fly by intercepting the user's transcript and updating the AI's instructions before it responds.
+3.  **ETL**: A manual script that scrapes dealership data using Playwright and stores it in a PostgreSQL database.
+4.  **Database**: A local PostgreSQL instance to store the scraped data for the RAG pipeline and to log chat history.
 
 ```
-+----------------------+      +-----------------------+      +--------------------+
-|      User Browser    |----->|   Frontend (Streamlit)|----->|  Backend (FastAPI) |
-| (Voice/Text Input)   |      |      (Web Service)    |      |   (Web Service)    |
-+----------------------+      +-----------------------+      +----------+---------+
-                                        ^                           |
-                                        | (API Calls)               | (RAG Pipeline)
-                                        v                           v
-+----------------------+      +-----------------------+      +----------+---------+
-| External Services    |<-----|   ETL (Cron Job)      |<---->|  PostgreSQL DB     |
-| (Dealership Website) |      | (Scraping & Loading)  |      | (Scraping & Chat)  |
-+----------------------+      +-----------------------+      +--------------------+
++--------------+      (WebSocket)      +-----------------------+      (WebSocket)      +-----------------------+
+| User Browser |<---------------------->| Backend (FastAPI)     |<---------------------->| OpenAI Realtime API   |
+| (HTML/JS)    |                       | (RAG Injection Proxy) |                       | (Transcription & TTS) |
++--------------+                       +----------+------------+                       +-----------------------+
+                                                  |
+                                                  | (SQL Query)
+                                                  v
+                                           +----------+------------+
+                                           |   PostgreSQL DB     |
+                                           | (Scraped Data & Chat) |
+                                           +---------------------+
+                                                  ^
+                                                  | (SQL Write)
+                                           +------|--------------+
+                                           | ETL (Manual Script) |
+                                           | (Playwright Scraper)|
+                                           +---------------------+
 ```
 
 ---
 
 ## Tech Stack
 
--   **Frameworks**: `FastAPI`, `Streamlit`.
--   **AI & Embeddings**: `openai`, `langchain`, `faiss-cpu`, `sentence-transformers`.
--   **Database**: `psycopg2-binary`, `SQLAlchemy`.
--   **Web Scraping**: `playwright`, `beautifulsoup4`.
--   **Deployment**: `Docker`, `Render`.
--   **Other Key Libraries**: `python-dotenv`, `gtts`, `speechrecognition`.
+-   **Frontend**: HTML, CSS, JavaScript (with Web Audio API)
+-   **Backend**: `FastAPI`, `WebSockets`
+-   **AI & Embeddings**: `openai`, `langchain`, `faiss-cpu`, `sentence-transformers`
+-   **Database**: `psycopg2-binary` (PostgreSQL)
+-   **Web Scraping**: `playwright`
+-   **Containerization**: `Docker`
 
 ---
 
@@ -50,23 +60,16 @@ voice_assistant/
 │   ├── embedding/
 │   ├── processing/
 │   ├── utils/
-│   ├── main.py           # FastAPI entry point
-│   ├── rag.py            # RAG pipeline orchestrator
-│   ├── config.py
-│   ├── prompts.py
+│   ├── main.py           # FastAPI WebSocket proxy
+│   ├── rag.py            # RAG pipeline
 │   ├── requirements.txt
 │   └── Dockerfile
 │
 ├── frontend/
-│   ├── app.py            # Streamlit entry point
-│   ├── requirements.txt
-│   └── Dockerfile
+│   └── realtime_rag_chat.html  # The single-page frontend
 │
 ├── etl/
-│   ├── data.py           # ETL entry point and scraping logic
-│   ├── config.py
-│   ├── requirements.txt
-│   └── Dockerfile
+│   └── data.py           # Manual ETL script
 │
 ├── .gitignore
 ├── README.md             # This file
@@ -75,23 +78,15 @@ voice_assistant/
 
 ---
 
-## Deployment (Render)
+## Local Setup and Execution
 
-The entire application is deployed on Render under a single project.
-
--   **Services**: The `frontend` and `backend` are deployed as **Web Services**. The `etl` service is deployed as a **Cron Job** that runs on a schedule.
--   **CI/CD**: Continuous deployment is enabled. Any push to the `main` branch will automatically trigger a new build and deployment for the relevant service(s) on Render.
--   **Environment**: All secrets (e.g., `DATABASE_URL`, `OPENAI_API_KEY`) are managed as a single secret group in Render and applied to all services.
-
----
-
-## Local Development
-
-The recommended way to run the project locally is with Docker.
+This project is designed to be run locally.
 
 ### 1. Prerequisites
--   Docker and Docker Compose
+-   Docker
+-   A modern web browser (e.g., Chrome, Firefox)
 -   Git
+-   A running PostgreSQL instance
 
 ### 2. Clone the Repository
 ```sh
@@ -100,51 +95,40 @@ cd voice_assitant
 ```
 
 ### 3. Configure Environment
-Create a `.env` file in the `backend` directory. This file will be used by the backend service.
+Create a `.env` file in the `backend` directory with your database connection string and OpenAI API key.
 ```
 # backend/.env
-DATABASE_URL="your_postgresql_connection_string"
+DATABASE_URL="postgresql://user:password@host:port/dbname"
 OPENAI_API_KEY="your_openai_api_key"
 ```
 
-### 4. Run Services with Docker
-You can build and run the services using their respective Dockerfiles.
+### 4. Run the ETL Process
+You must populate the database with data for the RAG pipeline to work. Run the ETL script manually:
+```sh
+cd etl/
+pip install -r requirements.txt
+python data.py
+```
+> **Note**: This requires Playwright browsers to be installed. If you haven't installed them, run `playwright install`.
 
-**Run Backend:**
+### 5. Run the Backend
+The backend runs in a Docker container.
 ```sh
 cd backend/
 docker build -t voice-assistant-backend .
-docker run --env-file .env -p 8001:8001 voice-assistant-backend
+docker run --env-file .env -p 8001:8001 --network="host" voice-assistant-backend
 ```
+> **Note**: `--network="host"` is used to easily connect to a PostgreSQL database running on `localhost`. Adjust if your database is hosted elsewhere.
 
-**Run Frontend:**
+### 6. Run the Frontend
+Navigate to the `frontend` directory and open the `realtime_rag_chat.html` file directly in your web browser.
 ```sh
-cd frontend/
-# Ensure BACKEND_API_URL is set in your shell environment for the frontend to connect to the backend
-export BACKEND_API_URL=http://localhost:8001
-pip install -r requirements.txt
-streamlit run app.py
+# On macOS
+open frontend/realtime_rag_chat.html
+# On Windows
+start frontend/realtime_rag_chat.html
+# On Linux
+xdg-open frontend/realtime_rag_chat.html
 ```
-> **Note**: The frontend is run locally with Streamlit's CLI for a better hot-reload development experience. It can also be run via Docker if preferred.
 
-### 5. Access Services
--   **Frontend UI**: `http://localhost:8501`
--   **Backend API Docs**: `http://localhost:8001/docs`
-
-## Deployment
-- **Docker:** Use the provided Dockerfiles in `backend/` and `frontend/` to build and run containers locally or on any Docker-compatible platform.
-- **Render (Docker):** Render deployment uses the Dockerfiles in each service folder. Push your code to GitHub, connect your repo to Render, and select "Docker" as the environment type for each service. Set environment variables in the Render dashboard as needed.
-
-## Usage
-- Access the Streamlit frontend at `http://localhost:8501` (or your Render URL).
-- The backend API runs at `http://localhost:10000` (or your Render URL).
-- Use the `/data` endpoint to trigger scraping and view dealership data.
-
-## Contributing
-Pull requests and issues are welcome! Please open an issue for bugs, feature requests, or questions.
-
-## License
-This project is licensed under the MIT License.
-
-## Author
-- Himanshu Verma ([himanshu21NA](https://github.com/himanshu21NA))
+The application should now be running in your browser tab. Click "Start Recording" to begin.

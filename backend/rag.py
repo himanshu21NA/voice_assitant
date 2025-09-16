@@ -108,3 +108,42 @@ def stream_response(user_query: str, session_id: str):
             save_chat_history(session_id, user_query, error_msg)
             yield error_msg
         return error_generator()
+    
+
+async def rag_response(user_query: str, session_id: str) -> str:
+    """Main function to handle user queries with streaming response and session management"""
+    # Get recent chat history for this session
+    chat_history = get_recent_chat_history(session_id, limit=5)
+    logging.info(f"Retrieved {len(chat_history)} chat history entries for session {session_id}")
+    
+    # Enhance query using chat history
+    enhanced_query = enhance_query(user_query, chat_history)
+    logging.info(f"Using enhanced query for search: '{enhanced_query}'")
+    
+    data = load_latest_dataset()
+    logging.info("Dataset loaded successfully")
+    
+    corpus = build_corpus(data)
+    logging.info(f"Corpus built with {len(corpus)} entries")
+    
+    texts = [c["text"] for c in corpus]
+    logging.debug("Texts extracted from corpus")
+    
+    embeddings = embed_texts(texts)
+    logging.info("Text embeddings created successfully")
+    
+    index = build_faiss_index(embeddings)
+    logging.info("FAISS index built successfully")
+    
+    # Use enhanced query for search
+    results = search(enhanced_query, corpus, index, k=10)
+    logging.info(f"Search completed with {len(results)} results using enhanced query")
+    
+    context = "\n".join([r[0]["text"] for r in results])
+
+    # Format chat history for the prompt (using original formatting)
+    chat_context = format_chat_history(chat_history)
+    
+    # Build prompt with chat history (use original user query in prompt, not enhanced)
+    prompt = f"{GENERATION_PROMPT}\n\n{chat_context}Context: {context}\n\nUser: {user_query}\nAssistant:"
+    return prompt

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realtime Voice RAG Chat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .controls {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: all 0.3s ease;
+        }
+        #startBtn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #startBtn:hover {
+            background-color: #45a049;
+        }
+        #stopBtn {
+            background-color: #f44336;
+            color: white;
+        }
+        #stopBtn:hover {
+            background-color: #da190b;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .speed-control {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .speed-control label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #495057;
+        }
+        .speed-slider {
+            width: 100%;
+            margin: 10px 0;
+        }
+        .speed-value {
+            display: inline-block;
+            background-color: #007bff;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status {
+            text-align: center;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status.ready {
+            background-color: #e8f5e8;
+            color: #2e7d2e;
+        }
+        .status.connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.recording {
+            background-color: #f8d7da;
+            color: #721c24;
+            animation: pulse 1.5s infinite;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .transcript-area {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 20px;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px 15px;
+            border-radius: 15px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        .user-message {
+            background-color: #007bff;
+            color: white;
+            margin-left: auto;
+            text-align: right;
+        }
+        .ai-message {
+            background-color: #e9ecef;
+            color: #333;
+        }
+        .system-message {
+            background-color: #6c757d;
+            color: white;
+            font-style: italic;
+            text-align: center;
+            max-width: 100%;
+        }
+        .instructions {
+            background-color: #e9ecef;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .instructions h3 {
+            margin-top: 0;
+            color: #007bff;
+        }
+        .instructions ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .instructions li {
+            margin: 5px 0;
+        }
+        .audio-settings {
+            background-color: #e9ecef;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .audio-settings h4 {
+            margin-top: 0;
+            color: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Realtime Voice RAG Chat</h1>
+        <div class="instructions">
+            <h3>How to use:</h3>
+            <ul>
+                <li>Click "Start Recording" to begin. Grant microphone access if prompted.</li>
+                <li>Speak naturally. The AI will detect when you stop and then respond.</li>
+                <li>Adjust the AI's voice speed using the slider.</li>
+                <li>Click "Stop Recording" to end the session.</li>
+            </ul>
+        </div>
+        <div class="controls">
+            <button id="startBtn">🎙️ Start Recording</button>
+            <button id="stopBtn" disabled>⏹️ Stop Recording</button>
+        </div>
+        <div class="audio-settings">
+            <h4>🔊 Audio Settings</h4>
+            <div class="speed-control">
+                <label for="speedControl">AI Voice Playback Speed:</label>
+                <input type="range" id="speedControl" class="speed-slider" min="0.5" max="1.5" step="0.1" value="1.0">
+                <span class="speed-value" id="speedValue">1.0x</span>
+            </div>
+        </div>
+        <div id="status" class="status ready">Ready to start</div>
+        <div class="transcript-area" id="transcriptArea">
+            <div class="system-message">Conversation will appear here...</div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket and Audio variables
+        let websocket;
+        let audioContext;
+        let mediaStream;
+        let isRecording = false;
+        let currentSpeed = 1.0;
+        let processor;
+
+        // --- NEW: Audio Playback Queue System ---
+        let audioQueue = [];
+        let isPlaying = false;
+        let nextPlayTime = 0;
+        const SAMPLE_RATE = 24000; // OpenAI's sample rate
+
+        // DOM Elements
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const transcriptArea = document.getElementById('transcriptArea');
+        const speedControl = document.getElementById('speedControl');
+        const speedValue = document.getElementById('speedValue');
+
+        // Event Listeners
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+        speedControl.addEventListener('input', (e) => {
+            currentSpeed = parseFloat(e.target.value);
+            speedValue.textContent = `${currentSpeed}x`;
+        });
+
+        function updateStatus(message, className = 'ready') {
+            status.textContent = message;
+            status.className = `status ${className}`;
+        }
+
+        function addMessage(content, type = 'system') {
+            const messageContainer = document.getElementById('transcriptArea');
+            // Remove initial message if it exists
+            const initialMessage = messageContainer.querySelector('.system-message');
+            if (initialMessage && initialMessage.textContent.includes('Conversation will appear')) {
+                initialMessage.remove();
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.textContent = content;
+            messageContainer.appendChild(messageDiv);
+            messageContainer.scrollTop = messageContainer.scrollHeight;
+        }
+
+        async function startRecording() {
+            updateStatus('Connecting...', 'connecting');
+            websocket = new WebSocket('ws://localhost:8001/realtime');
+
+            websocket.onopen = () => {
+                updateStatus('Connected. Initializing microphone...', 'connected');
+                setupAudio();
+            };
+
+            websocket.onmessage = async (event) => {
+                const data = JSON.parse(event.data);
+                switch (data.type) {
+                    case 'audio':
+                        const audioData = atob(data.audio);
+                        const audioBytes = new Uint8Array(audioData.length);
+                        for (let i = 0; i < audioData.length; i++) {
+                            audioBytes[i] = audioData.charCodeAt(i);
+                        }
+                        await playPCMAudio(audioBytes.buffer);
+                        break;
+                    case 'transcript':
+                        addMessage(`${data.content}`, 'user');
+                        break;
+                    case 'ai_speaking':
+                        if (data.speaking) {
+                            addMessage("AI is thinking...", 'ai');
+                        } else {
+                            // AI finished, handled by queue emptiness
+                        }
+                        break;
+                    case 'speech_started':
+                        updateStatus("Listening...", 'recording');
+                        break;
+                    case 'speech_stopped':
+                        updateStatus("Processing your speech...", 'connected');
+                        break;
+                    case 'error':
+                        addMessage(`Error: ${data.message}`, 'system');
+                        updateStatus('Error occurred', 'error');
+                        break;
+                }
+            };
+
+            websocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateStatus('Connection error', 'error');
+                stopRecording();
+            };
+
+            websocket.onclose = () => {
+                updateStatus('Connection closed', 'ready');
+                stopRecording();
+            };
+        }
+
+        async function setupAudio() {
+            try {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+                }
+                // Resume context if needed (for browser autoplay policies)
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: SAMPLE_RATE,
+                        channelCount: 1,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: true,
+                    },
+                });
+
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                processor = audioContext.createScriptProcessor(2048, 1, 1);
+
+                processor.onaudioprocess = (event) => {
+                    if (!isRecording || isPlaying) return;
+                    const inputData = event.inputBuffer.getChannelData(0);
+                    const pcm16 = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        let sample = Math.max(-1, Math.min(1, inputData[i]));
+                        pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                    }
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(pcm16.buffer);
+                    }
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                isRecording = true;
+                updateStatus('🎙️ Recording - Speak now!', 'recording');
+            } catch (error) {
+                console.error('Error setting up audio:', error);
+                updateStatus('Microphone access denied', 'error');
+                addMessage('Could not access microphone. Please check permissions.', 'system');
+            }
+        }
+
+        // --- REVISED: Audio Playback Logic ---
+        async function playPCMAudio(pcm16Buffer) {
+            // Convert ArrayBuffer of Int16 to Float32 for Web Audio API
+            const pcm16Data = new Int16Array(pcm16Buffer);
+            const float32Data = new Float32Array(pcm16Data.length);
+            for (let i = 0; i < pcm16Data.length; i++) {
+                float32Data[i] = pcm16Data[i] / 32768.0;
+            }
+
+            // Create an AudioBuffer
+            const audioBuffer = audioContext.createBuffer(1, float32Data.length, SAMPLE_RATE);
+            audioBuffer.copyToChannel(float32Data, 0);
+
+            // Add the buffer to our queue
+            audioQueue.push(audioBuffer);
+
+            // If nothing is currently playing, start the playback process
+            if (!isPlaying) {
+                // Clear the "AI is thinking..." message
+                const thinkingMessage = Array.from(document.querySelectorAll('.ai-message')).pop();
+                if (thinkingMessage && thinkingMessage.textContent.includes('thinking')) {
+                    thinkingMessage.textContent = '🔊';
+                }
+                playNextInQueue();
+            }
+        }
+
+        function playNextInQueue() {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                // AI finished speaking
+                const lastAiMessage = Array.from(document.querySelectorAll('.ai-message')).pop();
+                if (lastAiMessage) {
+                    lastAiMessage.textContent = lastAiMessage.textContent.replace('🔊', '✅');
+                }
+                updateStatus('🎙️ Recording - Speak now!', 'recording');
+                return;
+            }
+
+            isPlaying = true;
+            const bufferToPlay = audioQueue.shift();
+            const source = audioContext.createBufferSource();
+            source.buffer = bufferToPlay;
+            source.playbackRate.value = currentSpeed; // Apply speed control
+            source.connect(audioContext.destination);
+
+            // Schedule playback
+            const currentTime = audioContext.currentTime;
+            const startTime = nextPlayTime < currentTime ? currentTime : nextPlayTime;
+            source.start(startTime);
+            
+            // Update the time for the next chunk
+            nextPlayTime = startTime + bufferToPlay.duration / currentSpeed;
+
+            // When this chunk finishes, play the next one
+            source.onended = playNextInQueue;
+        }
+
+        function stopRecording() {
+            isRecording = false;
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (processor) {
+                processor.disconnect();
+            }
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close().then(() => {
+                    audioContext = null;
+                });
+            }
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.close();
+            }
+
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateStatus('Recording stopped', 'ready');
+            addMessage('Session ended.', 'system');
+            
+            // Clear any pending audio
+            audioQueue = [];
+            isPlaying = false;
+            nextPlayTime = 0;
+        }
+
+        window.addEventListener('beforeunload', stopRecording);
+    </script>
+</body>
+</html>

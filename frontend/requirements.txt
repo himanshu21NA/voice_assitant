@@ -1,7 +1,0 @@
-streamlit
-SpeechRecognition==3.10.4
-gTTS==2.5.1
-requests==2.32.3
-numpy==1.26.4
-Pillow==10.4.0
-pyaudio==0.2.14
