@@ -89,7 +89,7 @@ def ensure_chat_history_table_exists():
         logger.error(f"Failed to ensure chat_history table exists: {e}")
         return False
 
-def create_new_session() -> str:
+async def create_new_session() -> str:
     """Create a new session ID"""
     # Ensure table exists before creating session
     ensure_chat_history_table_exists()
